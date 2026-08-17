@@ -81,9 +81,11 @@ src/
     prisma.ts           # PrismaClient singleton (globalThis-cached in dev to survive HMR)
     week.ts             # week/day-of-week math (Monday-anchored, UTC) shared by the planner
     mealPlan.ts          # getOrCreateMealPlan(weekStartISO) — the planner's one entry point into MealPlan
+    recipeSearch.ts      # dish search: query-string parsing + Prisma where-clause builder
+    groceryList.ts       # buildGroceryList — pure ingredient consolidation over plain data
   generated/prisma/    # Prisma client output — gitignored, regenerate with `npm run db:generate`
   app/                 # Next.js App Router pages/route handlers
-    page.tsx             # recipe list (narrow, max-w-3xl reading-width layout)
+    page.tsx             # recipe list + filter form (narrow, max-w-3xl reading-width layout)
     recipes/[id]/
       page.tsx            # read-only recipe detail
     planner/
@@ -139,6 +141,14 @@ Unlike the planner grid, this page doesn't call `getOrCreateMealPlan` — it onl
 ### Recipe detail (`/recipes/[id]`)
 
 Plain read-only page — title, cuisine/servings, diet tags, nutrition stats, ingredients (amount/unit/note or "to taste"), instructions (steps split on `\n`, see `Recipe.instructions`' storage format above). Recipe titles link here from both the home page list and the planner grid's filled cells. `notFound()` on a missing id rather than a manual 404 render, per Next.js convention.
+
+### Filtered dish search (`/`)
+
+The home page's filter form is a plain `<form method="get">` — no client JS, no server action, just a GET request whose query string (`?diet=...&diet=...&cuisine=&minCalories=&maxCalories=&minProtein=`) the page reads via `searchParams` and re-renders around, the same pattern as the planner's `?week=`. `src/lib/recipeSearch.ts` splits this into two pure functions kept separate on purpose: `parseRecipeFilters` (query params → typed `RecipeFilters`) and `buildRecipeWhere` (`RecipeFilters` → `Prisma.RecipeWhereInput`) — parsing has no Prisma dependency and is trivially testable, and keeping the `where`-building out of the page component means the filter logic isn't tangled with data fetching.
+
+**Multiple selected diet tags are AND'd, not OR'd** — checking both "vegetarian" and "gluten-free" returns recipes that are both, not recipes that are either. This is the only sane reading for dietary *restrictions* (the reason someone filters by diet in the first place), even though it means the result set shrinks, sometimes to empty, as you add more tags. Verified against the seed data by hand: vegetarian+gluten-free returns exactly the 8 recipes carrying both tags, not the larger set carrying either one.
+
+Adding this turned the home page from statically prerendered to dynamic (`searchParams` forces that per Next.js — see the Deployment section's build output before this change), which is fine here since the page was always going to need live data once there's any per-request variation; it's mentioned because it's a real behavior change from the initial scaffold's `○ /` (static) route, not because it needs fixing.
 
 ## Key conventions
 

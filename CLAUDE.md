@@ -27,7 +27,7 @@ npm install
 # Run the dev server (http://localhost:3000)
 npm run dev
 
-# Apply schema changes as a new migration (creates prisma/dev.db on first run)
+# Apply schema changes as a new migration (needs DATABASE_URL pointing at a real Postgres instance — see below)
 npm run db:migrate
 
 # Regenerate the Prisma client after editing schema.prisma without a migration
@@ -51,12 +51,23 @@ npm run lint
 
 | File | Description |
 |---|---|
-| `.env` | `DATABASE_URL="file:./dev.db"` — created by `prisma init`, gitignored |
-| `dev.db` | Local SQLite database file, gitignored; regenerate with `npm run db:migrate && npm run db:seed` |
+| `.env` | `DATABASE_URL="postgresql://..."` — gitignored; see "Database: Postgres, not SQLite" below for where this points locally vs. in deploy |
+
+## Deployment (Render)
+
+`render.yaml` at the repo root is a [Render Blueprint](https://render.com/docs/blueprint-spec): it declares a free Postgres instance (`meal-prep-planner-db`) and a free Node web service (`meal-prep-planner`), with the service's `DATABASE_URL` wired to the database automatically via `fromDatabase`. To deploy: on Render, **New → Blueprint**, point it at this repo/branch, review, and apply — that's the whole setup, no manual env var entry needed.
+
+The web service's build command runs `prisma migrate deploy` and `prisma db seed` before `next build`, so every deploy brings the schema and mock recipe catalog up to date automatically (the seed's upsert-by-title behavior, see above, is exactly what makes this safe to run unconditionally on every build). `next start` reads `PORT` from the environment natively, which is how Render expects a web service to bind — no extra config needed there.
+
+If you ever need to run a one-off command (`prisma studio`, an ad hoc query) against the deployed database from a local checkout, point `DATABASE_URL` at the database's **External Database URL** from the Render dashboard (the `fromDatabase`-injected one on the web service is the *internal* URL, only reachable from other Render services in the same account).
 
 ## Architecture
 
-**Stack:** Next.js (App Router, TypeScript) with server components/route handlers doing double duty as the backend — no separate API server. Tailwind CSS v4 for styling. Prisma 7 + SQLite (via the `@prisma/adapter-better-sqlite3` driver adapter) for persistence.
+**Stack:** Next.js (App Router, TypeScript) with server components/route handlers doing double duty as the backend — no separate API server. Tailwind CSS v4 for styling. Prisma 7 + PostgreSQL (via the `@prisma/adapter-pg` driver adapter) for persistence.
+
+### Database: Postgres, not SQLite
+
+The project started on SQLite (see git history) and moved to Postgres so the deployed app has real persistence — Render's free web service tier has an ephemeral filesystem, so a SQLite file there gets wiped on every redeploy and on every idle spin-down (~15 min of inactivity). There is no local SQLite fallback; `DATABASE_URL` must point at a real Postgres instance both locally and in deploy (a Render free Postgres instance is fine for both — see the Deployment section). The migration history was reset when the provider changed (SQLite and Postgres migration SQL aren't compatible), so `prisma/migrations/` starts fresh from the Postgres schema.
 
 ```
 prisma/

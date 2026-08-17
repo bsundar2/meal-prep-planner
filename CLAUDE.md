@@ -14,7 +14,9 @@ A single-user webapp for weekly meal prep planning, built around one shared reci
 
 ## Recipe data: seeded, not a live API
 
-There is no external recipe API integration (Spoonacular etc. was considered and deliberately dropped). Instead, `prisma/seed-data.ts` is a hand-curated set of ~20 recipes (structured ingredients, rough nutrition estimates, diet tags, cuisines) spanning breakfast/lunch/dinner and multiple diets, meant for local dev/testing of search, filtering, consolidation, and pantry-matching — not verified nutrition-label data. `prisma/seed.ts` loads it via `RecipeSource.SEED`; user-entered recipes get `RecipeSource.CUSTOM` and are never touched by re-seeding (`prisma db seed` deletes and recreates `SEED` recipes only). Expand `seed-data.ts` directly to grow the mock catalog — no scraping pipeline exists or is planned.
+There is no external recipe API integration (Spoonacular etc. was considered and deliberately dropped). Instead, `prisma/seed-data.ts` is a hand-curated set of ~20 recipes (structured ingredients, rough nutrition estimates, diet tags, cuisines) spanning breakfast/lunch/dinner and multiple diets, meant for local dev/testing of search, filtering, consolidation, and pantry-matching — not verified nutrition-label data. `prisma/seed.ts` loads it via `RecipeSource.SEED`; user-entered recipes get `RecipeSource.CUSTOM` and are never touched by re-seeding. Expand `seed-data.ts` directly to grow the mock catalog — no scraping pipeline exists or is planned.
+
+`prisma db seed` **upserts by `(title, SEED)`, it does not delete-and-recreate.** `MealPlanEntry.recipe` has no `onDelete: Cascade` (see below), so once a seed recipe is referenced by a meal plan, deleting it throws a foreign key error — the seed script used to delete-then-recreate all `SEED` rows and broke exactly this way the first time a recipe was actually planned. Keep the upsert-by-title shape when editing `seed.ts`.
 
 ## Commands
 
@@ -60,11 +62,18 @@ npm run lint
 prisma/
   schema.prisma       # data model (see below)
   seed-data.ts         # curated mock recipe catalog (RecipeSource.SEED)
-  seed.ts              # loads seed-data.ts into the db, wipes old SEED rows first
+  seed.ts              # loads seed-data.ts into the db, upserting by (title, SEED)
 src/
-  lib/prisma.ts        # PrismaClient singleton (globalThis-cached in dev to survive HMR)
+  lib/
+    prisma.ts           # PrismaClient singleton (globalThis-cached in dev to survive HMR)
+    week.ts             # week/day-of-week math (Monday-anchored, UTC) shared by the planner
+    mealPlan.ts          # getOrCreateMealPlan(weekStartISO) — the planner's one entry point into MealPlan
   generated/prisma/    # Prisma client output — gitignored, regenerate with `npm run db:generate`
   app/                 # Next.js App Router pages/route handlers
+    page.tsx             # recipe list (narrow, max-w-3xl reading-width layout)
+    planner/
+      page.tsx            # weekly planner grid (wide, max-w-[2200px] layout — see note below)
+      actions.ts           # "use server" mutations: assignRecipe, updatePeople, removeEntry
 ```
 
 ### Prisma 7 note: driver adapters are required
@@ -77,7 +86,7 @@ This project was scaffolded against Prisma 7, which removed the `datasource.url`
 - **`Ingredient`** — canonical, deduplicated by `name` (unique), with a `category` (produce/dairy/meat/seafood/grains/pantry/spices/other) used to group the grocery list. This table is shared between `RecipeIngredient` and `PantryItem` — that shared identity is what makes pantry-matching and grocery consolidation possible; matching a pantry item to a recipe ingredient is a straight `ingredientId` join, not text/fuzzy matching.
 - **`RecipeIngredient`** — join row: recipe + ingredient + `amount`/`unit`/`note`. `amount`/`unit` are nullable for "salt to taste" style entries.
 - **`DietTag`** / **`RecipeDietTag`** — many-to-many, so dish search can filter by diet with a normal join/`some` query instead of parsing a delimited string column.
-- **`MealPlan`** — one row per planned week (`weekStart`), containing **`MealPlanEntry`** rows (`dayOfWeek` 0-6, `mealSlot`, `recipe`, `people`). `people` is what scales a recipe's ingredient amounts when consolidating the grocery list.
+- **`MealPlan`** — one row per planned week (`weekStart`, `@unique`), containing **`MealPlanEntry`** rows (`dayOfWeek` 0-6, `mealSlot`, `recipe`, `people`). `people` is what scales a recipe's ingredient amounts when consolidating the grocery list. `MealPlanEntry` has `@@unique([mealPlanId, dayOfWeek, mealSlot])` — one recipe per grid cell by design (assigning a new recipe to an occupied cell replaces it via upsert, it doesn't add a second dish); relax this only if multi-dish-per-slot becomes an actual requirement. `MealPlanEntry.recipe` intentionally has no `onDelete: Cascade` — deleting a recipe that's currently planned should be a visible error, not a silent hole in the week (this is exactly what bit the seed script; see above).
 - **`PantryItem`** — what you currently have; single-user, so no owner/user column.
 - **`Preferences`** — single row (`id: "singleton"`) holding standing diet/restriction/nutrition-goal filters; single-user, so this is config, not a per-account table.
 
@@ -96,6 +105,12 @@ This logic doesn't exist yet as of the initial scaffold — implement it as a pu
 
 Rank recipes by `(matched ingredient count) / (total ingredient count)`, where "matched" means the recipe's `ingredientId` appears in the user's `PantryItem` list — no unit/quantity comparison needed for a first pass (having *some* flour is enough to count as a match; whether it's *enough* flour is a stretch goal, not required for MVP).
 
+### Weekly planner (`/planner`)
+
+Server-rendered grid (7 days × `MealSlot`), navigated by a `?week=YYYY-MM-DD` search param holding that week's Monday (`src/lib/week.ts#mondayOf` normalizes whatever date comes in, so a stray non-Monday value in the URL can't desync the grid from the stored `MealPlan.weekStart`). No client-side state: every mutation is a plain `<form action={serverAction}>` POST (`planner/actions.ts`), so it works with JS disabled and there's no client/server state to keep in sync — `revalidatePath("/planner")` after each mutation is what makes the next render current. `getOrCreateMealPlan` (`src/lib/mealPlan.ts`) lazily creates the week's `MealPlan` row on first visit/mutation rather than requiring one to exist upfront.
+
+This page intentionally overrides the app's default narrow (`max-w-3xl`) reading-width layout with `max-w-[2200px]` — a 7-column grid needs real width, and clipping it to a text-reading measure just forces horizontal scrolling. If the grid ever needs to work well on narrow/mobile viewports, that's a real redesign (e.g. one-day-at-a-time view), not a matter of shrinking the max-width back down.
+
 ## Key conventions
 
 - **Single-user, no auth.** There's exactly one `Preferences` row and no user/account model anywhere. Don't add a `userId` column speculatively — if multi-user ever becomes a real requirement, that's a deliberate migration, not a default to design around now.
@@ -104,3 +119,4 @@ Rank recipes by `(matched ingredient count) / (total ingredient count)`, where "
 - **`prisma/seed-data.ts`** is plain data (no DB calls) so it can be imported and asserted on in tests independent of `seed.ts`'s upsert logic.
 - **Styling:** Tailwind v4, configured via `postcss.config.mjs` (no separate `tailwind.config.*` — v4 uses CSS-based config in `src/app/globals.css`).
 - **`AGENTS.md`** is regenerated by `next dev` itself (see the file) — don't hand-edit its content beyond what's already there; `CLAUDE.md` imports it via `@AGENTS.md` so both stay in sync automatically.
+- **Visual verification:** `playwright` is a devDependency specifically so UI changes can be screenshotted and actually looked at, not just typechecked/linted — the pre-installed Chromium lives at `/opt/pw-browsers/chromium` (pass it as `executablePath`; don't run `playwright install`). When scripting interactions against the dev server, wait for the specific UI change the mutation causes (e.g. a "Remove" button appearing in that grid cell) rather than `networkidle` — `revalidatePath` triggers a client-side re-render that can land after the network goes idle, and clicking through that window drops the interaction. A fresh `page.goto` is unaffected by this and is the reliable way to confirm what's actually persisted.

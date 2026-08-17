@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 
 export default async function Home() {
@@ -9,14 +10,21 @@ export default async function Home() {
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-16 font-sans dark:bg-black">
       <main className="mx-auto flex max-w-3xl flex-col gap-8">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-            Meal Prep Planner
-          </h1>
-          <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-            {recipes.length} recipes loaded from the database (this proves
-            Next.js → Prisma → SQLite is wired up end to end).
-          </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
+              Meal Prep Planner
+            </h1>
+            <p className="mt-2 text-zinc-600 dark:text-zinc-400">
+              {recipes.length} recipes loaded from the database.
+            </p>
+          </div>
+          <Link
+            href="/planner"
+            className="shrink-0 rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+          >
+            Weekly Planner →
+          </Link>
         </div>
         <ul className="flex flex-col gap-3">
           {recipes.map((recipe) => (

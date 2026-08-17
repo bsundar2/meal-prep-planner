@@ -90,7 +90,7 @@ model RecipeDietTag {
 
 model MealPlan {
   id        String   @id @default(cuid())
-  weekStart DateTime // Monday of the planned week, stored date-only (midnight UTC)
+  weekStart DateTime @unique // Monday of the planned week, stored date-only (midnight UTC)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -107,6 +107,7 @@ model MealPlanEntry {
   mealSlot   MealSlot
   people     Int      @default(1) // scales the recipe's ingredient amounts for grocery consolidation
 
+  @@unique([mealPlanId, dayOfWeek, mealSlot]) // one recipe per day/slot cell in the planner grid
   @@index([mealPlanId])
 }
 

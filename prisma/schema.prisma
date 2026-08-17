@@ -1,0 +1,132 @@
+// Prisma schema for meal-prep-planner.
+// See CLAUDE.md for the data-model rationale (why ingredients/diet tags are
+// join tables rather than comma-separated strings, unit-conversion strategy, etc).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum RecipeSource {
+  CUSTOM // entered by the user through the app
+  SEED   // pre-populated mock/testing data pulled from the web at dev time
+}
+
+enum MealSlot {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+model Recipe {
+  id           String       @id @default(cuid())
+  title        String
+  source       RecipeSource @default(CUSTOM)
+  servings     Int
+  cuisine      String?
+  instructions String       // newline-separated steps
+
+  caloriesPerServing Int?
+  proteinPerServing  Float?
+  carbsPerServing    Float?
+  fatPerServing      Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ingredients     RecipeIngredient[]
+  dietTags        RecipeDietTag[]
+  mealPlanEntries MealPlanEntry[]
+
+  @@index([source])
+}
+
+// Canonical ingredient, shared across recipes and the pantry so that
+// "flour" in one recipe and "flour" in the pantry are the same row —
+// this is what makes consolidation and pantry-matching possible.
+model Ingredient {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  category String? // grocery aisle grouping: produce, dairy, meat, pantry, grains, spices, other
+
+  recipeIngredients RecipeIngredient[]
+  pantryItem        PantryItem?
+}
+
+model RecipeIngredient {
+  id           String     @id @default(cuid())
+  recipe       Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  recipeId     String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  ingredientId String
+  amount       Float?  // null for "to taste" style entries
+  unit         String? // "cup", "tbsp", "tsp", "g", "oz", "lb", "clove", "piece", "can", "whole"
+  note         String? // "diced", "optional", etc.
+
+  @@index([recipeId])
+  @@index([ingredientId])
+}
+
+model DietTag {
+  id   String @id @default(cuid())
+  name String @unique // "vegetarian", "vegan", "gluten-free", "dairy-free", "keto", ...
+
+  recipes RecipeDietTag[]
+}
+
+model RecipeDietTag {
+  recipe    Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  recipeId  String
+  dietTag   DietTag @relation(fields: [dietTagId], references: [id], onDelete: Cascade)
+  dietTagId String
+
+  @@id([recipeId, dietTagId])
+}
+
+model MealPlan {
+  id        String   @id @default(cuid())
+  weekStart DateTime // Monday of the planned week, stored date-only (midnight UTC)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries MealPlanEntry[]
+}
+
+model MealPlanEntry {
+  id         String   @id @default(cuid())
+  mealPlan   MealPlan @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  mealPlanId String
+  recipe     Recipe   @relation(fields: [recipeId], references: [id])
+  recipeId   String
+  dayOfWeek  Int      // 0 = Monday .. 6 = Sunday
+  mealSlot   MealSlot
+  people     Int      @default(1) // scales the recipe's ingredient amounts for grocery consolidation
+
+  @@index([mealPlanId])
+}
+
+// Single-user app: one row per ingredient the user currently has on hand.
+model PantryItem {
+  id           String     @id @default(cuid())
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  ingredientId String     @unique
+  amount       Float?
+  unit         String?
+  addedAt      DateTime   @default(now())
+}
+
+// Single-user app: exactly one row, holding standing filters for dish search.
+model Preferences {
+  id                    String   @id @default("singleton")
+  dietTags              String?  // comma-separated preferred diet tags
+  excludedIngredients   String?  // comma-separated restricted/avoided ingredients
+  minCaloriesPerServing Int?
+  maxCaloriesPerServing Int?
+  minProteinPerServing  Float?
+  updatedAt             DateTime @updatedAt
+}

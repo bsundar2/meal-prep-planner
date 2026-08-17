@@ -45,12 +45,20 @@ export default async function Home({
               {filtersActive ? " for your filters" : " loaded from the database"}.
             </p>
           </div>
-          <Link
-            href="/planner"
-            className="shrink-0 rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-          >
-            Weekly Planner →
-          </Link>
+          <div className="flex shrink-0 gap-2">
+            <Link
+              href="/pantry"
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            >
+              Pantry →
+            </Link>
+            <Link
+              href="/planner"
+              className="rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+            >
+              Weekly Planner →
+            </Link>
+          </div>
         </div>
 
         <form

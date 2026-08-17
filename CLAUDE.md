@@ -83,11 +83,15 @@ src/
     mealPlan.ts          # getOrCreateMealPlan(weekStartISO) — the planner's one entry point into MealPlan
     recipeSearch.ts      # dish search: query-string parsing + Prisma where-clause builder
     groceryList.ts       # buildGroceryList — pure ingredient consolidation over plain data
+    pantryMatch.ts        # rankRecipesByPantry — pure matched/total ingredient ranking
   generated/prisma/    # Prisma client output — gitignored, regenerate with `npm run db:generate`
   app/                 # Next.js App Router pages/route handlers
     page.tsx             # recipe list + filter form (narrow, max-w-3xl reading-width layout)
     recipes/[id]/
       page.tsx            # read-only recipe detail
+    pantry/
+      page.tsx            # pantry management + ranked "recipes you can make" (force-dynamic — see note below)
+      actions.ts           # "use server" mutations: addPantryItem, removePantryItem
     planner/
       page.tsx            # weekly planner grid (wide, max-w-[2200px] layout — see note below)
       actions.ts           # "use server" mutations: assignRecipe, updatePeople, removeEntry
@@ -122,7 +126,7 @@ Implemented as `src/lib/groceryList.ts#buildGroceryList`, a pure function over p
 
 ### Pantry-matching strategy
 
-Rank recipes by `(matched ingredient count) / (total ingredient count)`, where "matched" means the recipe's `ingredientId` appears in the user's `PantryItem` list — no unit/quantity comparison needed for a first pass (having *some* flour is enough to count as a match; whether it's *enough* flour is a stretch goal, not required for MVP).
+Rank recipes by `(matched ingredient count) / (total ingredient count)`, where "matched" means the recipe's `ingredientId` appears in the user's `PantryItem` list — no unit/quantity comparison needed for a first pass (having *some* flour is enough to count as a match; whether it's *enough* flour is a stretch goal, not required for MVP). Implemented as `src/lib/pantryMatch.ts#rankRecipesByPantry` — see the Pantry-based suggestions section below.
 
 ### Weekly planner (`/planner`)
 
@@ -149,6 +153,14 @@ The home page's filter form is a plain `<form method="get">` — no client JS, n
 **Multiple selected diet tags are AND'd, not OR'd** — checking both "vegetarian" and "gluten-free" returns recipes that are both, not recipes that are either. This is the only sane reading for dietary *restrictions* (the reason someone filters by diet in the first place), even though it means the result set shrinks, sometimes to empty, as you add more tags. Verified against the seed data by hand: vegetarian+gluten-free returns exactly the 8 recipes carrying both tags, not the larger set carrying either one.
 
 Adding this turned the home page from statically prerendered to dynamic (`searchParams` forces that per Next.js — see the Deployment section's build output before this change), which is fine here since the page was always going to need live data once there's any per-request variation; it's mentioned because it's a real behavior change from the initial scaffold's `○ /` (static) route, not because it needs fixing.
+
+### Pantry-based suggestions (`/pantry`)
+
+Implements the pantry-matching strategy described above. `src/lib/pantryMatch.ts#rankRecipesByPantry` is a pure function (same shape as `groceryList.ts`/`recipeSearch.ts` — plain data in, no Prisma types) that scores every recipe by `matchedCount / totalCount` against a `Set` of pantry ingredient ids, filters out zero-match recipes, and sorts by ratio desc, then matched-count desc, then title asc for deterministic tie-breaking. Verified against real seeded data end to end (not just the pure function in isolation) — 9 common pantry items correctly surfaced 19 of 20 recipes ranked, with the one 0-match recipe (a recipe sharing none of those 9 ingredients) correctly excluded.
+
+Adding an ingredient (`addPantryItem` in `pantry/actions.ts`) upserts the `Ingredient` by name first — same `connectOrCreate`-by-name identity `RecipeIngredient` relies on — so typing an ingredient that's already used in a recipe (matched via a `<datalist>` of existing names, though free text works too) reuses that row rather than creating a duplicate; this is exactly what makes id-based matching against recipes work at all. Input is lowercased before the upsert since seed ingredient names are stored lowercase (see `seed-data.ts`) and matching is by exact id, not fuzzy text.
+
+**This page needs `export const dynamic = "force-dynamic"`, unlike the other pages.** Every other page either takes `searchParams` (home, planner, grocery-list) or reads a route param (`recipes/[id]`), either of which forces Next.js into per-request dynamic rendering automatically. `/pantry` does neither — it's a plain server component whose only per-request variation comes from `PantryItem` rows that change via server actions — so without the explicit override, Next.js has a real static-rendering candidate on its hands despite the page depending on frequently-mutated data, and `revalidatePath("/pantry")` alone was not reliably enough to keep it current (reproduced during development: repeated navigations returned a stale, smaller match list). Explicit `force-dynamic` removes the ambiguity rather than depending on revalidation timing.
 
 ## Key conventions
 

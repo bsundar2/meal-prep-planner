@@ -6,6 +6,7 @@ import {
   parseRecipeFilters,
   type RecipeSearchParams,
 } from "@/lib/recipeSearch";
+import { isSpoonacularConfigured, searchSpoonacularRecipes } from "@/lib/spoonacular";
 
 export default async function Home({
   searchParams,
@@ -31,6 +32,11 @@ export default async function Home({
     }),
   ]);
   const cuisines = cuisineRows.map((r) => r.cuisine).filter((c): c is string => c != null);
+
+  // Only hits the API on an actual search, not on every plain page load —
+  // Spoonacular's free tier is quota-limited (see lib/spoonacular.ts).
+  const externalRecipes =
+    filtersActive && isSpoonacularConfigured() ? await searchSpoonacularRecipes(filters) : [];
 
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-16 font-sans dark:bg-black">
@@ -194,6 +200,32 @@ export default async function Home({
             </li>
           )}
         </ul>
+
+        {externalRecipes.length > 0 && (
+          <section>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+              From Spoonacular
+            </h2>
+            <p className="mt-1 text-xs text-zinc-400">
+              Opening one saves it to your library, so it stays available for planning offline.
+            </p>
+            <ul className="mt-3 flex flex-col gap-3">
+              {externalRecipes.map((hit) => (
+                <li
+                  key={hit.externalId}
+                  className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
+                >
+                  <Link
+                    href={`/recipes/external/${hit.externalId}`}
+                    className="font-medium text-zinc-950 hover:underline dark:text-zinc-50"
+                  >
+                    {hit.title}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </main>
     </div>
   );

@@ -34,6 +34,7 @@ export default async function RecipeDetailPage({
             </h1>
             <span className="shrink-0 text-sm text-zinc-500">
               {recipe.cuisine} · serves {recipe.servings}
+              {recipe.source === "SPOONACULAR" && " · via Spoonacular"}
             </span>
           </div>
           {recipe.dietTags.length > 0 && (

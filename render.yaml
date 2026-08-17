@@ -19,3 +19,5 @@ services:
           property: connectionString
       - key: NODE_ENV
         value: production
+      - key: SPOONACULAR_API_KEY
+        sync: false

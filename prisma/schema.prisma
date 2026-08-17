@@ -12,8 +12,9 @@ datasource db {
 }
 
 enum RecipeSource {
-  CUSTOM // entered by the user through the app
-  SEED   // pre-populated mock/testing data pulled from the web at dev time
+  CUSTOM      // entered by the user through the app
+  SEED        // pre-populated mock/testing data pulled from the web at dev time
+  SPOONACULAR // fetched from the Spoonacular API and cached locally on first view
 }
 
 enum MealSlot {
@@ -27,6 +28,7 @@ model Recipe {
   id           String       @id @default(cuid())
   title        String
   source       RecipeSource @default(CUSTOM)
+  externalId   String?      // Spoonacular recipe id (string form); null for CUSTOM/SEED
   servings     Int
   cuisine      String?
   instructions String       // newline-separated steps
@@ -43,6 +45,10 @@ model Recipe {
   dietTags        RecipeDietTag[]
   mealPlanEntries MealPlanEntry[]
 
+  // Lets caching be an upsert-by-(source,externalId) lookup instead of a
+  // search-then-create race; externalId is null for CUSTOM/SEED rows, and
+  // Postgres treats NULLs as distinct so those never collide with each other.
+  @@unique([source, externalId])
   @@index([source])
 }
 

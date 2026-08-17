@@ -12,9 +12,11 @@ A single-user webapp for weekly meal prep planning, built around one shared reci
 2. **Filtered dish search.** Search the recipe catalog by diet tags (vegetarian, vegan, gluten-free, ...), cuisine, and nutrition ranges (calories/protein per serving).
 3. **Pantry-based suggestions.** Give it a list of ingredients you have on hand; it ranks recipes by how many of their ingredients you already have, so you can find something to cook with what's in the fridge.
 
-## Recipe data: seeded, not a live API
+## Recipe data: seeded catalog + live Spoonacular search
 
-There is no external recipe API integration (Spoonacular etc. was considered and deliberately dropped). Instead, `prisma/seed-data.ts` is a hand-curated set of ~20 recipes (structured ingredients, rough nutrition estimates, diet tags, cuisines) spanning breakfast/lunch/dinner and multiple diets, meant for local dev/testing of search, filtering, consolidation, and pantry-matching — not verified nutrition-label data. `prisma/seed.ts` loads it via `RecipeSource.SEED`; user-entered recipes get `RecipeSource.CUSTOM` and are never touched by re-seeding. Expand `seed-data.ts` directly to grow the mock catalog — no scraping pipeline exists or is planned.
+Two sources feed the `Recipe` table, distinguished by `RecipeSource`. `prisma/seed-data.ts` is a hand-curated set of ~20 recipes (structured ingredients, rough nutrition estimates, diet tags, cuisines) spanning breakfast/lunch/dinner and multiple diets — originally the *only* source (a live API was considered and deliberately dropped early on), now the offline-always-available baseline that search/filtering/consolidation/pantry-matching can be tested against with zero network dependency. `prisma/seed.ts` loads it via `RecipeSource.SEED`; user-entered recipes get `RecipeSource.CUSTOM` and are never touched by re-seeding. Expand `seed-data.ts` directly to grow the mock catalog.
+
+On top of that, `RecipeSource.SPOONACULAR` recipes are fetched live from the Spoonacular API and cached into the same table on first view — see "External recipe API (Spoonacular)" below.
 
 `prisma db seed` **upserts by `(title, SEED)`, it does not delete-and-recreate.** `MealPlanEntry.recipe` has no `onDelete: Cascade` (see below), so once a seed recipe is referenced by a meal plan, deleting it throws a foreign key error — the seed script used to delete-then-recreate all `SEED` rows and broke exactly this way the first time a recipe was actually planned. Keep the upsert-by-title shape when editing `seed.ts`.
 
@@ -52,6 +54,7 @@ npm run lint
 | File | Description |
 |---|---|
 | `.env` | `DATABASE_URL="postgresql://..."` — gitignored; see "Database: Postgres, not SQLite" below for where this points locally vs. in deploy |
+| `.env`'s `SPOONACULAR_API_KEY` | Optional — enables live Spoonacular search on the home page (see "External recipe API" below). Everything works without it; it's just off. |
 
 ## Deployment (Render)
 
@@ -153,6 +156,20 @@ The home page's filter form is a plain `<form method="get">` — no client JS, n
 **Multiple selected diet tags are AND'd, not OR'd** — checking both "vegetarian" and "gluten-free" returns recipes that are both, not recipes that are either. This is the only sane reading for dietary *restrictions* (the reason someone filters by diet in the first place), even though it means the result set shrinks, sometimes to empty, as you add more tags. Verified against the seed data by hand: vegetarian+gluten-free returns exactly the 8 recipes carrying both tags, not the larger set carrying either one.
 
 Adding this turned the home page from statically prerendered to dynamic (`searchParams` forces that per Next.js — see the Deployment section's build output before this change), which is fine here since the page was always going to need live data once there's any per-request variation; it's mentioned because it's a real behavior change from the initial scaffold's `○ /` (static) route, not because it needs fixing.
+
+### External recipe API (Spoonacular)
+
+`src/lib/spoonacular.ts` is a thin client for [Spoonacular](https://spoonacular.com/food-api); `SPOONACULAR_API_KEY` is optional — everything works without it, this section's code just no-ops (`isSpoonacularConfigured()` gates every call site). Free tier is 150 points/day, so the design leans quota-conservative throughout:
+
+- **Search is opt-in, not automatic.** The home page only calls `searchSpoonacularRecipes` when `hasActiveFilters(filters)` is true — a plain unfiltered visit to `/` never touches the API, only an actual search does.
+- **Search results carry no nutrition.** Requesting nutrition in `complexSearch` costs extra points per Spoonacular's own pricing; results are just `{externalId, title, imageUrl}`. Full detail (ingredients, instructions, nutrition) is only fetched once you actually open one.
+- **Caching makes "once" literal.** `src/lib/cacheExternalRecipe.ts#cacheSpoonacularRecipe` looks up `Recipe` by the `(source, externalId)` unique constraint first and only calls `getSpoonacularRecipeDetail` (the expensive `/recipes/{id}/information` call) on a genuine cache miss. The resolver route `recipes/external/[externalId]/page.tsx` is the only thing that calls it — it caches (or reuses) the recipe and redirects to the normal `/recipes/[id]` detail page, so a Spoonacular recipe and a local one look identical to everything downstream (the planner, grocery list, pantry matching) once it's been viewed once. There's no "sync" or refresh path — a cached Spoonacular recipe is a permanent local copy from that point on, same as a seed recipe.
+
+**Diet tags split across two different Spoonacular parameters, not one.** `diet` is Spoonacular's own recipe-level classification (supports multiple values ANDed via commas, which is what our own AND-multiple-diet-tags semantics needed); `intolerances` actually analyzes ingredient content, which is the correct mechanism for genuine restrictions like gluten/dairy rather than a loose category tag. So `vegetarian`/`vegan`/`keto`→`ketogenic`/`pescatarian`→`pescetarian` (note Spoonacular's spelling) go through `diet`, while `gluten-free`→`gluten`/`dairy-free`→`dairy` go through `intolerances`. The reverse mapping (`REVERSE_DIET` in `spoonacular.ts`) is used when caching a fetched recipe back into our own `DietTag` vocabulary from Spoonacular's `diets` response array — only tags we recognize get kept; Spoonacular's diet list is broader than ours (paleo, whole30, low FODMAP, ...) and those are silently dropped rather than polluting `DietTag` with one-off values nothing else filters by.
+
+The exact request/response shapes (`complexSearch` params, `extendedIngredients`, `nutrition.nutrients`) were sourced from Spoonacular's public docs and third-party references rather than fetched directly (spoonacular.com is blocked by this sandbox's network egress policy) — verified against a real API key and real live responses before being considered correct, not just typechecked. If Spoonacular ever changes these shapes, `spoonacular.ts` is the one place that needs to change; nothing downstream (the caching function, the pages) knows or cares that the data came from an HTTP API rather than the seed script.
+
+**Not wired into `/pantry` yet.** Spoonacular's `findByIngredients` endpoint would extend pantry-based suggestions the same way `complexSearch` extended dish search, but that's a separate follow-up — the local `rankRecipesByPantry` logic doesn't depend on it and isn't affected by its absence.
 
 ### Pantry-based suggestions (`/pantry`)
 

@@ -33,9 +33,12 @@ export default async function Home() {
               className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
             >
               <div className="flex items-baseline justify-between gap-4">
-                <span className="font-medium text-zinc-950 dark:text-zinc-50">
+                <Link
+                  href={`/recipes/${recipe.id}`}
+                  className="font-medium text-zinc-950 hover:underline dark:text-zinc-50"
+                >
                   {recipe.title}
-                </span>
+                </Link>
                 <span className="text-sm text-zinc-500">
                   {recipe.cuisine} · serves {recipe.servings}
                 </span>

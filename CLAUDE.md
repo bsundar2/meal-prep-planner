@@ -84,9 +84,13 @@ src/
   generated/prisma/    # Prisma client output — gitignored, regenerate with `npm run db:generate`
   app/                 # Next.js App Router pages/route handlers
     page.tsx             # recipe list (narrow, max-w-3xl reading-width layout)
+    recipes/[id]/
+      page.tsx            # read-only recipe detail
     planner/
       page.tsx            # weekly planner grid (wide, max-w-[2200px] layout — see note below)
       actions.ts           # "use server" mutations: assignRecipe, updatePeople, removeEntry
+      grocery-list/
+        page.tsx            # consolidated shopping list for a week, via lib/groceryList.ts
 ```
 
 ### Prisma 7 note: driver adapters are required
@@ -112,7 +116,7 @@ Combining ingredient amounts across recipes needs unit handling, and it won't al
 - When units aren't reconcilable (e.g., "1 clove garlic" + "2 tsp minced garlic"), list them as separate line items under the same ingredient rather than guessing a conversion.
 - Group the final list by `Ingredient.category` for a shopping-friendly layout.
 
-This logic doesn't exist yet as of the initial scaffold — implement it as a pure function over `MealPlanEntry[]` (fetched with recipes/ingredients included) so it's unit-testable without a database.
+Implemented as `src/lib/groceryList.ts#buildGroceryList`, a pure function over plain data — see the Grocery list section below for how it's wired into the actual page.
 
 ### Pantry-matching strategy
 
@@ -123,6 +127,18 @@ Rank recipes by `(matched ingredient count) / (total ingredient count)`, where "
 Server-rendered grid (7 days × `MealSlot`), navigated by a `?week=YYYY-MM-DD` search param holding that week's Monday (`src/lib/week.ts#mondayOf` normalizes whatever date comes in, so a stray non-Monday value in the URL can't desync the grid from the stored `MealPlan.weekStart`). No client-side state: every mutation is a plain `<form action={serverAction}>` POST (`planner/actions.ts`), so it works with JS disabled and there's no client/server state to keep in sync — `revalidatePath("/planner")` after each mutation is what makes the next render current. `getOrCreateMealPlan` (`src/lib/mealPlan.ts`) lazily creates the week's `MealPlan` row on first visit/mutation rather than requiring one to exist upfront.
 
 This page intentionally overrides the app's default narrow (`max-w-3xl`) reading-width layout with `max-w-[2200px]` — a 7-column grid needs real width, and clipping it to a text-reading measure just forces horizontal scrolling. If the grid ever needs to work well on narrow/mobile viewports, that's a real redesign (e.g. one-day-at-a-time view), not a matter of shrinking the max-width back down.
+
+There's no explicit "save" action anywhere in the planner — every add/update/remove is already a committed database write via its server action, so "saving" isn't a distinct step the UI needs to expose. The planner page says this outright ("Changes save automatically") specifically so that isn't ambiguous to someone used to apps with a separate save step.
+
+### Grocery list (`/planner/grocery-list`)
+
+Implements the consolidation strategy described above. `src/lib/groceryList.ts#buildGroceryList` is a pure function over plain `PlannedEntry[]` data (no Prisma types) — the page (`planner/grocery-list/page.tsx`) does the Prisma fetch (`MealPlan` for the `?week=` param, with `entries.recipe.ingredients.ingredient` included) and maps it into that plain shape before calling it, which is what keeps the merge/convert logic itself testable without a database. Verified by hand against real seeded data (see git history for the exact numbers) rather than an automated test — there's no test runner set up in this repo yet; if one gets added, this function is the natural first thing to cover, since it's already shaped for it.
+
+Unlike the planner grid, this page doesn't call `getOrCreateMealPlan` — it only reads (`prisma.mealPlan.findUnique`), so *viewing* an empty week's grocery list doesn't create a database row as a side effect the way visiting `/planner` does.
+
+### Recipe detail (`/recipes/[id]`)
+
+Plain read-only page — title, cuisine/servings, diet tags, nutrition stats, ingredients (amount/unit/note or "to taste"), instructions (steps split on `\n`, see `Recipe.instructions`' storage format above). Recipe titles link here from both the home page list and the planner grid's filled cells. `notFound()` on a missing id rather than a manual 404 render, per Next.js convention.
 
 ## Key conventions
 

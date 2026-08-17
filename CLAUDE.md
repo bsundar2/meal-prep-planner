@@ -59,6 +59,8 @@ npm run lint
 
 The web service's build command runs `prisma migrate deploy` and `prisma db seed` before `next build`, so every deploy brings the schema and mock recipe catalog up to date automatically (the seed's upsert-by-title behavior, see above, is exactly what makes this safe to run unconditionally on every build). `next start` reads `PORT` from the environment natively, which is how Render expects a web service to bind — no extra config needed there.
 
+**`npm ci --include=dev` is required, not `npm ci`.** Render sets `NODE_ENV=production` for the build step (not just at runtime), and plain `npm ci` under `NODE_ENV=production` silently skips `devDependencies`. That breaks two things at once here: `tsx` (needed to run `prisma db seed`, which fails with `spawn tsx ENOENT`) and, less obviously, `typescript`/`tailwindcss`/`@types/*` (which `next build` itself needs even though they're conceptually dev tooling — Next.js doesn't build without them). `--include=dev` overrides the `NODE_ENV`-triggered skip for the install step only; the runtime (`next start`) is unaffected and still runs with `NODE_ENV=production`. Verified by reproducing Render's exact `npm ci` package count (182) locally under `NODE_ENV=production` before adding the flag, and 553 after.
+
 If you ever need to run a one-off command (`prisma studio`, an ad hoc query) against the deployed database from a local checkout, point `DATABASE_URL` at the database's **External Database URL** from the Render dashboard (the `fromDatabase`-injected one on the web service is the *internal* URL, only reachable from other Render services in the same account).
 
 ## Architecture
